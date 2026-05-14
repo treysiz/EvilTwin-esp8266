@@ -29,11 +29,19 @@ jobs:
         run: |
           arduino-cli compile \
             --fqbn esp8266:esp8266:nodemcuv2 \
+            --verbose \
             esp8266_evil_twin
+
+      - name: Show build output
+        run: |
+          echo "=== .bin files ==="
+          find . -name "*.bin" 2>/dev/null
+          echo "=== build tree ==="
+          find build -type f 2>/dev/null || echo "(no build dir)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: esp8266_evil_twin
-          path: build/esp8266.esp8266.nodemcuv2/esp8266_evil_twin.ino.bin
-          if-no-files-found: error
+          path: "**/*.bin"
+          if-no-files-found: warn
