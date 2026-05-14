@@ -29,10 +29,11 @@ jobs:
         run: |
           arduino-cli compile \
             --fqbn esp8266:esp8266:nodemcuv2 \
-            esp8266_evil_twin.ino
+            esp8266_evil_twin
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: esp8266_evil_twin
           path: build/esp8266.esp8266.nodemcuv2/esp8266_evil_twin.ino.bin
+          if-no-files-found: error
