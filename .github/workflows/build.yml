@@ -14,6 +14,7 @@ jobs:
 
       - name: Install arduino-cli
         run: |
+          mkdir -p $HOME/.local/bin
           curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=$HOME/.local/bin sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
@@ -23,13 +24,6 @@ jobs:
           arduino-cli config add board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
           arduino-cli core update-index
           arduino-cli core install esp8266:esp8266
-
-      - name: Install libraries
-        run: |
-          arduino-cli lib install "DNSServer"
-          arduino-cli lib install "ESP8266WiFi"
-          arduino-cli lib install "ESP8266WebServer"
-          arduino-cli lib install "EEPROM"
 
       - name: Compile
         run: |
@@ -41,5 +35,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: esp8266_evil_twin
-          path: |
-            build/esp8266.esp8266.nodemcuv2/*.bin
+          path: build/esp8266.esp8266.nodemcuv2/esp8266_evil_twin.ino.bin
