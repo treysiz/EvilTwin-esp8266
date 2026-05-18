@@ -214,8 +214,7 @@ static void loadPwd(void)
                     strcpy(pwdHistorySSID[pwdCount], "未知网络");
                 }
                 
-                pwdCount++;
-            }
+            pwdCount++;
         }
     }
     EEPROM.end();
