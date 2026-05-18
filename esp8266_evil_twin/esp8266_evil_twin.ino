@@ -59,6 +59,9 @@ static int      apRSSI[MAX_SCAN];
 static unsigned long lastDeauthMs;
 static uint8_t  lastSetChannel = 0;
 
+static unsigned long btnPressTime = 0;
+static bool     btnIsPressed = false;
+
 /* ================================================================== */
 /*  Hex helpers – avoids %X / %x portability traps on newlib-nano      */
 /* ================================================================== */
@@ -671,32 +674,6 @@ static void onNotFound(void)
     server.send(302, "text/plain", "");
 }
 
-/* ================================================================== */
-/*  Factory reset                                                     */
-/* ================================================================== */
-static void checkFactoryReset(void)
-{
-    pinMode(RESET_PIN, INPUT_PULLUP);
-    if (digitalRead(RESET_PIN) == HIGH) return;
-
-    Serial.printf("BOOT button held – keep holding %d s to reset...\n",
-                  RESET_HOLD_MS / 1000);
-
-    unsigned long start = millis();
-    while (digitalRead(RESET_PIN) == LOW &&
-           millis() - start < (unsigned long)RESET_HOLD_MS)
-        delay(100);
-
-    if (millis() - start >= RESET_HOLD_MS) {
-        Serial.println(">>> Factory reset – clearing ALL data...");
-        clearAll();
-        ESP.restart();
-    } else if (millis() - start >= 100) {
-        Serial.println(">>> Short press – stopping attack and returning to config...");
-        clearConfig();
-        ESP.restart();
-    }
-    Serial.println("Button press too short.");
 }
 
 /* ================================================================== */
@@ -790,7 +767,7 @@ void setup(void)
 {
     Serial.begin(115200);
     delay(500);
-    checkFactoryReset();
+    pinMode(RESET_PIN, INPUT_PULLUP);
     loadSetupConfig();
     loadConfig();
     loadPwd();
@@ -800,6 +777,29 @@ void setup(void)
 
 void loop(void)
 {
+    bool currentBtn = (digitalRead(RESET_PIN) == LOW);
+    if (currentBtn) {
+        if (!btnIsPressed) {
+            btnPressTime = millis();
+            btnIsPressed = true;
+            Serial.println("Button pressed...");
+        } else if (millis() - btnPressTime >= RESET_HOLD_MS) {
+            Serial.println(">>> Factory reset – clearing ALL data...");
+            clearAll();
+            ESP.restart();
+        }
+    } else {
+        if (btnIsPressed) {
+            unsigned long duration = millis() - btnPressTime;
+            btnIsPressed = false;
+            if (duration >= 100) {
+                Serial.println(">>> Short press – stopping attack and returning to config...");
+                clearConfig();
+                ESP.restart();
+            }
+        }
+    }
+
     dnsServer.processNextRequest();
     server.handleClient();
 
