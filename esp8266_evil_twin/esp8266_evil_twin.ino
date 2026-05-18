@@ -221,14 +221,15 @@ static void loadPwd(void)
                 strncpy(pwdHistory[pwdCount], tmp, PWD_MAX_LEN);
                 pwdHistory[pwdCount][PWD_MAX_LEN] = '\0';
             
-            if ((uint8_t)tmpS[0] != 0xFF && tmpS[0] != '\0') {
-                strncpy(pwdHistorySSID[pwdCount], tmpS, 32);
-                pwdHistorySSID[pwdCount][32] = '\0';
-            } else {
-                strcpy(pwdHistorySSID[pwdCount], "未知网络");
+                if ((uint8_t)tmpS[0] != 0xFF && tmpS[0] != '\0') {
+                    strncpy(pwdHistorySSID[pwdCount], tmpS, 32);
+                    pwdHistorySSID[pwdCount][32] = '\0';
+                } else {
+                    strcpy(pwdHistorySSID[pwdCount], "未知网络");
+                }
+                
+                pwdCount++;
             }
-            
-            pwdCount++;
         }
     }
     EEPROM.end();
@@ -237,6 +238,9 @@ static void loadPwd(void)
 static void saveSetupConfig(const char *ssid, const char *pwd, uint8_t timeout)
 {
     EEPROM.begin(EE_SIZE);
+    int lenPwd = strlen(pwd);
+    if (lenPwd > PWD_MAX_LEN - 1) lenPwd = PWD_MAX_LEN - 1;
+    
     uint8_t buf[PWD_MAX_LEN];
     for (int i = 0; i < lenPwd; i++) buf[i] = (uint8_t)pwd[i];
     for (int i = lenPwd; i < PWD_MAX_LEN; i++) buf[i] = 0x00;
