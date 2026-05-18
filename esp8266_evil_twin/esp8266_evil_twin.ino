@@ -673,7 +673,7 @@ static void onNotFound(void)
     server.send(302, "text/plain", "");
 }
 
-}
+
 
 /* ================================================================== */
 /*  Mode entry                                                         */
